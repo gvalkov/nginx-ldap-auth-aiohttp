@@ -60,11 +60,27 @@ def authenticate_user(request, config):
         return username, binddn
 
     else:
-        # TODO: Not implemented yet.
-        conn = connect_ldap(config['X-Ldap-URL'], config['X-Ldap-BindDN'], config['X-Ldap-BindPW'])
-        exists = conn.search(config['X-BaseDN'], '(objectClass=*)', ldap3.SUBTREE, attributes=['objectClass'])
+        # Two-step process:
+        #  1. Bind with bind user, search in basedn for username
+        #  2. Success? Use retrieved DN to validate user's password.
+        conn = connect_ldap(config['X-Ldap-URL'], config['X-Ldap-BindDN'], config['X-Ldap-BindPW'] )
+        exists = conn.search(
+                search_base=config['X-Ldap-BaseDN'],
+                search_filter='(sAMAccountName=%s)' % username,
+                search_scope=ldap3.SUBTREE,
+                size_limit=1)
+        log.info('Found user: "{}"'.format(username))
 
         if not exists:
+            raise SendChallenge()
+
+        user_dn = conn.entries[0].entry_dn
+        conn.unbind()
+        try:
+            conn = connect_ldap(config['X-Ldap-URL'], user_dn, password)
+            log.info('Access granted for "{}"'.format(username))
+            return username, user_dn
+        except:
             raise SendChallenge()
 
 
